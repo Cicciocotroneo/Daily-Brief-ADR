@@ -1,14 +1,17 @@
-import os
+
+
+  import os
 import requests
 import feedparser
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
+from zoneinfo import ZoneInfo
 from icalendar import Calendar
 
 TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 CALENDAR_ICS_URL = os.getenv("CALENDAR_ICS_URL")
 
-# --- 1. METEO MILANO (GIORNALIERO + FASCE ORARIE) ---
+# --- 1. METEO MILANO (DINAMICO SULLE ORE SUCCESSIVE) ---
 def get_wmo_icon(code):
     if code == 0:
         return "☀️ Sereno"
@@ -38,24 +41,31 @@ def get_weather():
     daily = res.get("daily", {})
     hourly = res.get("hourly", {})
 
-    # Sintesi giornaliera
     t_min = daily.get("temperature_2m_min", ["-"])[0]
     t_max = daily.get("temperature_2m_max", ["-"])[0]
     rain_max = daily.get("precipitation_probability_max", ["-"])[0]
 
-    # Fasce orarie della giornata
-    target_hours = ["08:00", "13:00", "18:00", "22:00"]
-    hourly_reports = []
+    now = datetime.now(ZoneInfo("Europe/Rome"))
+    current_hour = now.hour
+
+    # Fasce orarie monitorate nella giornata
+    all_target_hours = ["08:00", "13:00", "16:00", "19:00", "22:00"]
+    target_hours = [h for h in all_target_hours if int(h.split(":")[0]) > current_hour]
+
+    check_date = now.date().isoformat()
+    # Se tutte le ore di oggi sono passate (es. esecuzione a notte fonda), guarda la mattina successiva
+    if not target_hours:
+        target_hours = ["08:00", "13:00"]
+        check_date = (now.date() + timedelta(days=1)).isoformat()
 
     times = hourly.get("time", [])
     temps = hourly.get("temperature_2m", [])
     codes = hourly.get("weather_code", [])
     rain_probs = hourly.get("precipitation_probability", [])
 
-    today_prefix = date.today().isoformat()
-
+    hourly_reports = []
     for target in target_hours:
-        full_target_time = f"{today_prefix}T{target}"
+        full_target_time = f"{check_date}T{target}"
         if full_target_time in times:
             idx = times.index(full_target_time)
             temp = temps[idx]
@@ -68,24 +78,26 @@ def get_weather():
         "t_min": t_min,
         "t_max": t_max,
         "rain_max": rain_max,
-        "hourly_text": "\n".join(hourly_reports)
+        "hourly_text": "\n".join(hourly_reports) if hourly_reports else "Nessuna previsione oraria residua."
     }
 
-# --- 2. AGENDA ---
+# --- 2. AGENDA DEL GIORNO ---
 def get_calendar_events():
     if not CALENDAR_ICS_URL:
         return [("—", "Nessun calendario configurato")]
     try:
         res = requests.get(CALENDAR_ICS_URL)
         cal = Calendar.from_ical(res.text)
-        today = date.today()
+        today = datetime.now(ZoneInfo("Europe/Rome")).date()
         events = []
 
         for component in cal.walk('vevent'):
             dtstart = component.get('dtstart').dt
             if isinstance(dtstart, datetime):
-                dtstart_date = dtstart.date()
-                time_str = dtstart.strftime("%H:%M")
+                # Porta al fuso locale per calcolare correttamente data e ora
+                dtstart_local = dtstart.astimezone(ZoneInfo("Europe/Rome"))
+                dtstart_date = dtstart_local.date()
+                time_str = dtstart_local.strftime("%H:%M")
             else:
                 dtstart_date = dtstart
                 time_str = "Tutto il giorno"
@@ -99,7 +111,7 @@ def get_calendar_events():
     except Exception as e:
         return [("!", f"Errore lettura calendario: {e}")]
 
-# --- 3. GOOGLE NEWS ---
+# --- 3. NOTIZIE ---
 def get_news_category(rss_url):
     feed = feedparser.parse(rss_url)
     items = []
@@ -119,7 +131,7 @@ def get_all_news():
     }
     return {category: get_news_category(url) for category, url in feeds.items()}
 
-# --- 4. CREAZIONE PAGINA TELEGRAPH ---
+# --- 4. GENERAZIONE SCHEDA SU TELEGRAPH ---
 def create_telegraph_page(today_str, weather, events, news):
     acc = requests.post(
         "https://api.telegra.ph/createAccount",
@@ -130,10 +142,12 @@ def create_telegraph_page(today_str, weather, events, news):
     weather_nodes = [
         {"tag": "p", "children": [f"🌡️ Min: {weather['t_min']}°C | Max: {weather['t_max']}°C (Prob. pioggia max: {weather['rain_max']}%)"]}
     ]
-    # Aggiunge le fasce orarie alla pagina Telegraph
     if weather["hourly_text"]:
         lines = weather["hourly_text"].replace("<b>", "").replace("</b>", "").split("\n")
-        weather_nodes.append({"tag": "ul", "children": [{"tag": "li", "children": [l.replace("• ", "")]} for l in lines]})
+        weather_nodes.append({
+            "tag": "ul",
+            "children": [{"tag": "li", "children": [l.replace("• ", "")]} for l in lines]
+        })
 
     content_nodes = [
         {"tag": "h4", "children": ["📍 Meteo Milano"]},
@@ -182,7 +196,7 @@ def create_telegraph_page(today_str, weather, events, news):
 
     return page["result"]["url"]
 
-# --- 5. INVIO SU TELEGRAM ---
+# --- 5. INVIO MESSAGGIO TELEGRAM ---
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
     payload = {
@@ -193,8 +207,10 @@ def send_telegram(message):
     requests.post(url, json=payload)
 
 def main():
-    today_str = datetime.now().strftime("%d/%m/%Y")
-    
+    now = datetime.now(ZoneInfo("Europe/Rome"))
+    today_str = now.strftime("%d/%m/%Y")
+    hour_str = now.strftime("%H:%M")
+
     weather = get_weather()
     events = get_calendar_events()
     news = get_all_news()
@@ -202,7 +218,7 @@ def main():
     page_url = create_telegraph_page(today_str, weather, events, news)
 
     summary_msg = (
-        f"☀️ <b>Buongiorno! Ecco il tuo Daily Briefing del {today_str}</b>\n\n"
+        f"☀️ <b>Briefing delle {hour_str} ({today_str})</b>\n\n"
         f"📍 <b>Meteo Milano</b>\n"
         f"🌡️ Min: {weather['t_min']}°C | Max: {weather['t_max']}°C\n"
         f"{weather['hourly_text']}\n\n"
