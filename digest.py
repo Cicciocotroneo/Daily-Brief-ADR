@@ -1,6 +1,4 @@
-
-
-  import os
+import os
 import requests
 import feedparser
 from datetime import datetime, date, timedelta
