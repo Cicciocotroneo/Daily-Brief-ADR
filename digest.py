@@ -61,7 +61,10 @@ def get_all_news():
         "📰 Cronaca": "https://news.google.com/rss/headlines/section/topic/NATION?hl=it&gl=IT&ceid=IT:it",
         "🏛️ Politica": "https://news.google.com/rss/search?q=politica&hl=it&gl=IT&ceid=IT:it",
         "⚽ Sport": "https://news.google.com/rss/headlines/section/topic/SPORTS?hl=it&gl=IT&ceid=IT:it",
-        "💻 Tecnologia": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it"
+        "💻 Tecnologia": "https://news.google.com/rss/headlines/section/topic/TECHNOLOGY?hl=it&gl=IT&ceid=IT:it",
+         "📍 Cronaca Salerno": "https://news.google.com/rss/search?q=Salerno+cronaca&hl=it&gl=IT&ceid=IT:it",
+        "🇱🇻 Salernitana": "https://news.google.com/rss/search?q=Salernitana&hl=it&gl=IT&ceid=IT:it"
+ 
     }
     return {category: get_news_category(url) for category, url in feeds.items()}
 
