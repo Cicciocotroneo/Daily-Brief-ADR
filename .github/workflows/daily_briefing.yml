@@ -3,7 +3,7 @@ name: Daily Briefing
 on:
   schedule:
     # 04:30 UTC corrisponde alle 06:30 CEST (ora legale) o 05:30 CET (ora solare)
-    - cron: '30 4,10,16 * * *'
+    - cron: '30 4,10,16,20 * * *'
   workflow_dispatch:
 
 jobs:
